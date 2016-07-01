@@ -90,7 +90,11 @@ commands.scroll = (args) ->
 
 commands.mark_scroll_position = ({vim, keyStr, notify = true}) ->
   element = vim.state.scrollableElements.filterSuitableDefault()
-  vim.state.marks[keyStr] = [element.scrollTop, element.scrollLeft]
+  vim.state.marks[keyStr] =
+    if element.ownerDocument.documentElement.localName == 'svg'
+      [element.ownerGlobal.scrollY, element.ownerGlobal.scrollX]
+    else
+      [element.scrollTop, element.scrollLeft]
   if notify
     vim.notify(translate('notification.mark_scroll_position.success', keyStr))
 
@@ -125,23 +129,32 @@ helper_follow = (options, matcher, {vim, pass}) ->
 
     shape = getElementShape(element)
 
-    # CodeMirror editor uses a tiny hidden textarea positioned at the caret.
-    # Targeting those are the only reliable way of focusing CodeMirror editors,
-    # and doing so without moving the caret.
-    if not shape.nonCoveredPoint and id == 'normal' and
-       element.nodeName == 'TEXTAREA' and element.ownerGlobal == vim.content
-      rect = element.getBoundingClientRect()
-      # Use `.clientWidth` instead of `rect.width` because the latter includes
-      # the width of the borders of the textarea, which are unreliable.
-      if element.clientWidth == 1 and rect.height > 0
-        shape = {
-          nonCoveredPoint: {
-            x: rect.left
-            y: rect.top + rect.height / 2
-            offset: {left: 0, top: 0}
+    unless shape.nonCoveredPoint then switch
+      # CodeMirror editor uses a tiny hidden textarea positioned at the caret.
+      # Targeting those are the only reliable way of focusing CodeMirror
+      # editors, and doing so without moving the caret.
+      when id == 'normal' and element.localName == 'textarea' and
+           element.ownerGlobal == vim.content
+        rect = element.getBoundingClientRect()
+        # Use `.clientWidth` instead of `rect.width` because the latter includes
+        # the width of the borders of the textarea, which are unreliable.
+        if element.clientWidth == 1 and rect.height > 0
+          shape = {
+            nonCoveredPoint: {
+              x: rect.left
+              y: rect.top + rect.height / 2
+              offset: {left: 0, top: 0}
+            }
+            area: rect.width * rect.height
           }
-          area: rect.width * rect.height
-        }
+
+      # Putting a large `<input type="file">` inside a smaller wrapper element
+      # with `overflow: hidden;` seems to be a common pattern, used both on
+      # addons.mozilla.org and <https://blueimp.github.io/jQuery-File-Upload/>.
+      when id in ['normal', 'focus'] and element.localName == 'input' and
+           element.type == 'file' and element.parentElement?
+        parentShape = getElementShape(element.parentElement)
+        shape = parentShape if parentShape.area <= shape.area
 
     if not shape.nonCoveredPoint and pass == 'complementary'
       shape = getElementShape(element, -1)
